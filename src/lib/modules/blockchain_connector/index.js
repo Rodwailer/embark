@@ -4,6 +4,7 @@ const Provider = require('./provider.js');
 const utils = require('../../utils/utils');
 const constants = require('../../constants');
 const embarkJsUtils = require('embarkjs').Utils;
+const fs = require('../../core/fs');
 
 const WEB3_READY = 'blockchain:ready';
 
@@ -24,6 +25,7 @@ class BlockchainConnector {
     this.wait = options.wait;
     this.contractsSubscriptions = [];
     this.contractsEvents = [];
+    this.logFile = fs.dappPath(".embark", "contractEvents.json");
 
     self.events.setCommandHandler("blockchain:web3:isReady", (cb) => {
       cb(self.isWeb3Ready);
@@ -191,19 +193,20 @@ class BlockchainConnector {
   }
 
   registerEvents() {
-    const self = this;
-    self.events.on('check:wentOffline:Ethereum', () => {
-      self.logger.warn('Ethereum went offline: stopping web3 provider...');
-      self.provider.stop();
+    this.events.on('check:wentOffline:Ethereum', () => {
+      this.logger.warn('Ethereum went offline: stopping web3 provider...');
+      this.provider.stop();
 
       // once the node goes back online, we can restart the provider
-      self.events.once('check:backOnline:Ethereum', () => {
-        self.logger.warn('Ethereum back online: starting web3 provider...');
-        self.provider.startWeb3Provider(() => {
-          self.logger.warn('web3 provider restarted after ethereum node came back online');
+      this.events.once('check:backOnline:Ethereum', () => {
+        this.logger.warn('Ethereum back online: starting web3 provider...');
+        this.provider.startWeb3Provider(() => {
+          this.logger.warn('web3 provider restarted after ethereum node came back online');
         });
       });
     });
+
+    this.events.on('blockchain:contracts:event', this._saveEvent.bind(this));
   }
 
   onReady(callback) {
@@ -404,7 +407,7 @@ class BlockchainConnector {
       'get',
       '/embark-api/blockchain/contracts/events',
       (_req, res) => {
-        res.send(JSON.stringify(this.contractsEvents));
+        res.send(JSON.stringify(this._getEvents()));
       }
     );
 
@@ -698,6 +701,26 @@ class BlockchainConnector {
       });
       callback();
     });
+  }
+
+  _getEvents() {
+    const data = this._readEvents();
+    return Object.values(data).reverse();
+  }
+
+  _saveEvent(event) {
+    const data = this._readEvents();
+    data[new Date().getTime()] = event;
+    fs.writeJSONSync(this.logFile, data);
+  }
+
+  _readEvents() {
+    fs.ensureFileSync(this.logFile);
+    try {
+      return JSON.parse(fs.readFileSync(this.logFile));
+    } catch(_error) {
+      return {};
+    }
   }
 }
 

@@ -1,4 +1,5 @@
 const utils = require('../../utils/utils.js');
+const fs = require('../../core/fs');
 
 class ConsoleListener {
   constructor(embark, options) {
@@ -7,16 +8,18 @@ class ConsoleListener {
     this.ipc = options.ipc;
     this.events = embark.events;
     this.addressToContract = [];
-    this.logs = [];
     this.contractsConfig = embark.config.contractsConfig;
     this.contractsDeployed = false;
     this.outputDone = false;
+    this.logFile = fs.dappPath(".embark", "contractLogs.json");
+
     this._listenForLogRequests();
+    this._registerAPI();
+    
+    this.events.on("contracts:log", this._saveLog.bind(this));
     this.events.on('outputDone', () => {
       this.outputDone = true;
     });
-    this._registerAPI();
-
     this.events.on("contractsDeployed", () => {
       this.contractsDeployed = true;
       this._updateContractList();
@@ -97,8 +100,8 @@ class ConsoleListener {
       gasUsed = utils.hexToNumber(gasUsed);
       blockNumber = utils.hexToNumber(blockNumber);
 
-      this.logs.push(Object.assign({}, request, {name, functionName, paramString, gasUsed, blockNumber}));
-      this.events.emit('contracts:log', this.logs[this.logs.length - 1]);
+      const log = Object.assign({}, request, {name, functionName, paramString, gasUsed, blockNumber});
+      this.events.emit('contracts:log', log);
 
       this.logger.info(`Blockchain>`.underline + ` ${name}.${functionName}(${paramString})`.bold + ` | ${transactionHash} | gas:${gasUsed} | blk:${blockNumber} | status:${status}`);
       this.events.emit('blockchain:tx', { name: name, functionName: functionName, paramString: paramString, transactionHash: transactionHash, gasUsed: gasUsed, blockNumber: blockNumber, status: status });
@@ -121,9 +124,29 @@ class ConsoleListener {
       'get',
       apiRoute,
       (req, res) => {
-        res.send(JSON.stringify(this.logs));
+        res.send(JSON.stringify(this._getLogs()));
       }
     );
+  }
+
+  _getLogs() {
+    const data = this._readLogs();
+    return Object.values(data).reverse();
+  }
+
+  _saveLog(log) {
+    const data = this._readLogs();
+    data[new Date().getTime()] = log;
+    fs.writeJSONSync(this.logFile, data);
+  }
+
+  _readLogs() {
+    fs.ensureFileSync(this.logFile);
+    try {
+      return JSON.parse(fs.readFileSync(this.logFile));
+    } catch(_error) {
+      return {};
+    }
   }
 }
 
